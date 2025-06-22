@@ -1,0 +1,1 @@
+alias idrser='cd src && nodemon --exec "cd ../ && idris2 --cg javascript --build && node build/exec/Main.js" --ext .idr'
