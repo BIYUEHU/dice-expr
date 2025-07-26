@@ -21,8 +21,9 @@ nextBits (MkRNG s) =
   in (r, MkRNG s3)
 
 public export
-%foreign "javascript:lambda:()=>BigInt(Date.now())"
+-- %foreign "javascript:lambda:()=>BigInt(Date.now())"
 getSeed : Integer
+getSeed = 0
 
 public export
 randomInt : Integer -> Integer -> RNG -> (Integer, RNG)

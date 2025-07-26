@@ -1,7 +1,9 @@
 module Main
 
-import Data.Vect
 import Random
+import Data.Vect
+import Parser
+import TestCombinator
 
 data Ty = TyInt | TyBool | TyList Ty | TyFun Ty Ty
 
@@ -55,6 +57,13 @@ x `dice` y =
 add : Expr ctxt (TyFun TyInt (TyFun TyInt TyInt))
 add = Lam (Lam (Op (\x => \y => cast $ dice (cast x) (cast y)) (Var Stop) (Var (Pop Stop))))
 
+loop : IO ()
+loop = do
+  putStr "> "
+  input <- getLine
+  print $ parseDice input
+
 main : IO ()
 main = do
-  printLn $ interp [] add 2 1
+  -- printLn $ interp [] add 2 1
+  loop
