@@ -7,11 +7,11 @@ record RNG where
   constructor MkRNG
   seed : Integer
 
-public export
+export
 initRNG : Integer -> RNG
 initRNG s = MkRNG s
 
-public export
+export
 nextBits : RNG -> (Integer, RNG)
 nextBits (MkRNG s) =
   let s1 = s `xor` (s `shiftL` 13)
@@ -20,19 +20,26 @@ nextBits (MkRNG s) =
       r  = s3 * 2685821657736338717
   in (r, MkRNG s3)
 
-public export
--- %foreign "javascript:lambda:()=>BigInt(Date.now())"
+export
+%foreign "javascript:lambda:()=>BigInt(Date.now())"
 getSeed : Integer
-getSeed = 0
 
-public export
-randomInt : Integer -> Integer -> RNG -> (Integer, RNG)
-randomInt lo hi rng =
-  case nextBits rng of
-    (bits, rng') =>
-      let range = hi - lo + 1
-          v     = lo + (bits `mod` range)
-      in
-        (v, rng')
+-- export
+-- randomInt : Integer -> Integer -> RNG -> (Integer, RNG)
+-- randomInt lo hi rng =
+--   case nextBits rng of
+--     (bits, rng') =>
+--       let range = hi - lo + 1
+--           v     = lo + (bits `mod` range)
+--       in
+--         (v, rng')
 
+export
+%foreign "javascript:lambda:() => () => Math.random()"
+prim__random : IO Double
 
+export
+randomInt : Int -> Int -> IO Int
+randomInt lo hi =
+  do r <- prim__random
+     pure $ lo + cast {to = Int} (floor (r * cast {to = Double} (hi - lo + 1)))

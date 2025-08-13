@@ -1,18 +1,10 @@
 {
-  "name": "avgjs",
+  "name": "dice-expr",
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "tauri": "tauri"
+    "dev": "python scripts/watch.py --root src --ext .idr --cmd \"npm run build && node build/exec/Main.js\"",
+    "build": "idris2 --cg node --build"
   },
-  "dependencies": {
-    "@tauri-apps/api": "^1"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^1",
-    "vite": "^6.0.3"
-  }
+  "devDependencies": {}
 }

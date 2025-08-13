@@ -1,14 +1,12 @@
 module Combinator
 
-public export
-HString : Type
-HString = List Char
+import Utils
 
 public export
 Parser : Type -> Type
 Parser a = HString -> Either String (a, HString)
 
-public export
+export
 empty : Parser (List a)
 empty s = Right ([], s)
 
@@ -54,38 +52,38 @@ p1 <|> p2 = \s =>
     Right result => Right result
 
 mutual
-  public export
+  export
   many : Parser a -> Parser (List a)
   many p = some p <|> empty
 
-  public export
+  export
   some : Parser a -> Parser (List a)
   some p = p <**> many p
 
-public export
+export
 satisfy : (Char -> Bool) -> Parser Char
 satisfy f s = case s of
   [] => Left $ "Unexpected end of input"
   (c :: rest) => if f c then Right (c, rest) else Left $ "Character '" ++ show c ++ "' does not satisfy the condition"
 
-public export
+export
 spaces : Parser HString
 spaces = many (satisfy isSpace)
 
-public export
+export
 symbol : HString -> Parser HString
 symbol s = case s of
   [] => empty <* spaces
   (c :: rest) => satisfy (== c) <**> symbol rest
 
-public export
+export
 integer : Parser Integer
 integer = some (satisfy isDigit) <* spaces <&> cast . pack
 
-public export
+export
 float : Parser Double
 float = some (satisfy isDigit) <* satisfy (== '.') <**> some (satisfy isDigit) <* spaces <&> cast . pack
 
-public export
+export
 string : Parser HString
 string = satisfy (== '"') *> many (satisfy (/= '"')) <* satisfy (== '"') <* spaces

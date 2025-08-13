@@ -1,236 +1,171 @@
 module Parser
 
-import Combinator
+import Lexer
+import Data.List
+import Token
+import Ast
 
-public export
-data DPrefixOp = DNeg | DAANot
+export
+record ParseState where
+  constructor MkParseState
+  lexState : LexState
+  current : Token
 
-public export
-data DInfixOp
-  = DAdd
-  | DSub
-  | DMul
-  | DDiv
-  | DMod
-  | DPow
-  | DEq
-  | DNeq
-  | DGt
-  | DGte
-  | DLt
-  | DLte
-  | DAnd
-  | DOr
-  | DDice
-  | DRandom
-  | DRange
-  | DConcat
+export
+initParseState : String -> Either String ParseState
+initParseState input = do
+  let lexState = initLexState input
+  (firstToken, newLexState) <- nextToken lexState
+  Right (MkParseState newLexState firstToken)
+
+advance : ParseState -> Either String ParseState
+advance state = do
+  (token, newLexState) <- nextToken state.lexState
+  Right (MkParseState newLexState token)
+
+expect : Token -> ParseState -> Either String ParseState
+expect expected state =
+  if state.current == expected
+  then advance state
+  else Left ("Expected " ++ show expected ++ " but got " ++ show state.current)
+
+tokenToInfixOp : Token -> Either String DInfixOp
+tokenToInfixOp TPlus = Right DAdd
+tokenToInfixOp TMinus = Right DSub
+tokenToInfixOp TMul = Right DMul
+tokenToInfixOp TDiv = Right DDiv
+tokenToInfixOp TMod = Right DMod
+tokenToInfixOp TPow = Right DPow
+tokenToInfixOp TEq = Right DEq
+tokenToInfixOp TNeq = Right DNeq
+tokenToInfixOp TGt = Right DGt
+tokenToInfixOp TGte = Right DGte
+tokenToInfixOp TLt = Right DLt
+tokenToInfixOp TLte = Right DLte
+tokenToInfixOp TAnd = Right DAnd
+tokenToInfixOp TOr = Right DOr
+tokenToInfixOp TDice = Right DDice
+tokenToInfixOp TRandom = Right DRandom
+tokenToInfixOp TRange = Right DRange
+tokenToInfixOp TConcat = Right DConcat
+tokenToInfixOp TColon = Right DColon
+tokenToInfixOp t = Left $ "Not an infix operator: " ++ show t
+
 
 mutual
-  public export
-  data DExpr : Type where
-    DLambda : List HString -> DExpr -> DExpr
-    DPrefix : DPrefixOp -> DExpr -> DExpr
-    DInfix : DExpr -> DInfixOp -> DExpr -> DExpr
-    DCall : DCallHead -> List DExpr -> DExpr
-    DDLiteral : DLiteral -> DExpr
-    DIdent : HString -> DExpr
-    DParen : DExpr -> DExpr
+  parseExpr : ParseState -> Either String (DExpr, ParseState)
+  parseExpr = parseInfixExpr 0
 
-  public export
-  data DCallHead : Type where
-    DLambdaHead : List HString -> DExpr -> DCallHead
-    DIdentHead : HString -> DCallHead
+  parseInfixExpr : Nat -> ParseState -> Either String (DExpr, ParseState)
+  parseInfixExpr minPrec state = do
+    (left, state') <- parsePrimaryExpr state
+    parseInfixExprHelper minPrec left state'
 
+  parseInfixExprHelper : Nat -> DExpr -> ParseState -> Either String (DExpr, ParseState)
+  parseInfixExprHelper minPrec left state =
+    if isInfixOp state.current then
+      let prec = precedence state.current
+      in if prec >= minPrec then do
+        op <- tokenToInfixOp state.current
+        state' <- advance state
+        (right, state'') <- parseInfixExpr (prec + 1) state'
+        let newExpr = DInfix left op right
+        parseInfixExprHelper minPrec newExpr state''
+      else
+        Right (left, state)
+    else
+      Right (left, state)
 
-  public export
-  data DLiteral : Type where
-    DBool : Bool -> DLiteral
-    DNumber : Double -> DLiteral
-    DArray : List DExpr -> DLiteral
+  parsePrimaryExpr : ParseState -> Either String (DExpr, ParseState)
+  parsePrimaryExpr state = case state.current of
+    TLambda => do
+      state' <- advance state
+      case state'.current of
+        TIdent name => do
+          (params, state'') <- parseParamList state'
+          state''' <- expect TArrow state''
+          (body, state'''') <- parseExpr state'''
+          Right ( DLambda params body, state'''')
+        _ => Left $ "Expected parameter after \\, got: " ++ show state'.current
 
-public export
-implementation Show DPrefixOp where
-  show DNeg = "-"
-  show DAANot = "!"
+    TMinus => do
+      state' <- advance state
+      (expr, state'') <- parsePrimaryExpr state'
+      Right (DPrefix DNeg expr, state'')
 
-public export
-implementation Show DInfixOp where
-  show DAdd = "+"
-  show DSub = "-"
-  show DMul = "*"
-  show DDiv = "/"
-  show DMod = "%"
-  show DPow = "^"
-  show DEq = "=="
-  show DNeq = "!="
-  show DGt = ">"
-  show DGte = ">="
-  show DLt = "<"
-  show DLte = "<="
-  show DAnd = "&&"
-  show DOr = "||"
-  show DDice = "d"
-  show DRandom = "~"
-  show DRange = ".."
-  show DConcat = "++"
+    TNot => do
+      state' <- advance state
+      (expr, state'') <- parsePrimaryExpr state'
+      Right ( DPrefix DNot expr, state'')
 
-joined : String -> List String -> String
-joined _ [] = ""
-joined _ [x] = x
-joined sep (x :: xs) = x ++ sep ++ joined sep xs
+    TLParen => do
+      state' <- advance state
+      (expr, state'') <- parseExpr state'
+      state''' <- expect TRParen state''
+      Right ( DParen expr,  state''')
 
-mutual
-  partial
-  public export
-  implementation Show DLiteral where
-    show (DBool b) = show b
-    show (DNumber n) = show n
-    show (DArray xs) = "[" ++ joined ", " (map show xs) ++ "]"
+    TLBracket => do
+      state' <- advance state
+      (exprs, state'') <- parseExprList state'
+      state''' <- expect TRBracket state''
+      Right ( DDLiteral $ DArray exprs, state''')
 
-  partial
-  public export
-  implementation Show DCallHead where
-    show (DLambdaHead args body) = "(\\" ++ joined ", " (map pack args) ++ " -> " ++ show body ++ ")"
-    show (DIdentHead name) = pack name
+    TNumber n => do
+      state' <- advance state
+      Right ( DDLiteral $ DNumber n, state')
 
+    TBool b => do
+      state' <- advance state
+      Right (DDLiteral $ DBool b, state')
 
-  partial
-  public export
-  implementation Show DExpr where
-    show (DLambda args body) = "(\\" ++ joined ", " (map pack args) ++ " -> " ++ show body ++ ")"
-    show (DPrefix op e) = show op ++ show e
-    show (DInfix l op r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
-    show (DCall f args) = show f ++ "(" ++ joined ", " (map show args) ++ ")"
-    show (DDLiteral lit) = show lit
-    show (DIdent name) = pack name
-    show (DParen e) = "(" ++ show e ++ ")"
+    TIdent name => do
+      state' <- advance state
+      case state'.current of
+        TLParen => parseCall name state'
+        _ => Right (DIdent name, state')
 
-ssymbol : String -> Parser HString
-ssymbol = symbol . unpack
+    _ => Left $ "Unexpected token in primary expression: " ++ show state.current
 
-sepBy1 : Parser a -> Parser b -> Parser (List a)
-sepBy1 p sep = p <**> many (sep *> p)
+  parseCall : String -> ParseState -> Either String (DExpr, ParseState)
+  parseCall name state = do
+    state' <- expect TLParen state
+    (args, state'') <- parseExprList state'
+    state''' <- expect TRParen state''
+    Right (DCall (DIdentHead name) args, state''')
 
-sepBy : Parser a -> Parser b -> Parser (List a)
-sepBy p sep = sepBy1 p sep <|> empty
+  parseParamList : ParseState -> Either String (List String, ParseState)
+  parseParamList state = case state.current of
+    TIdent name => do
+      state' <- advance state
+      case state'.current of
+        TComma => do
+          state'' <- advance state'
+          (rest, state''') <- parseParamList state''
+          Right ( name :: rest, state''')
+        _ => Right ( [name], state')
+    _ => Left $ "Expected parameter name, got: " ++ show state.current
 
-chainl1 : Parser a -> Parser (a -> a -> a) -> Parser a
-chainl1 p op = p <*> many (op <*> p) <&> \(x, pairs) => foldl (\acc, (f, y) => f acc y) x pairs
-
-ident : Parser HString
-ident = some (satisfy isAlpha) <* spaces
-
-bool : Parser Bool
-bool = (ssymbol "true" &> True) <|> 
-       (ssymbol "false" &> False)
-
-paramList : Parser (List HString)
-paramList = ident `sepBy1` ssymbol ","
-
-prefixOp : Parser DPrefixOp
-prefixOp = (ssymbol "-" &> DNeg) <|> (ssymbol "!" &> DAANot)
-
-infixOp : Parser DInfixOp
-infixOp = 
-  let x = (ssymbol "++" &> DConcat) <|>
-          (ssymbol "&&" &> DAnd) <|>
-          (ssymbol "||" &> DOr) <|>
-          (ssymbol "==" &> DEq) in
-  let x = x <|>
-          (ssymbol "!=" &> DNeq) <|>
-          (ssymbol ">=" &> DGte) <|>
-          (ssymbol "<=" &> DLte) in
-  let x = x <|>
-          (ssymbol ">" &> DGt) <|>
-          (ssymbol "<" &> DLt) <|>
-          (ssymbol "+" &> DAdd) in
-  let x = x <|>
-          (ssymbol "-" &> DSub) <|>
-          (ssymbol "*" &> DMul) <|>
-          (ssymbol "/" &> DDiv) in
-  let x = x <|>
-          (ssymbol "%" &> DMod) <|>
-          (ssymbol "^" &> DPow) <|>
-          (ssymbol "d" &> DDice) in
-  x <|>
-  (ssymbol "~" &> DRandom) <|>
-  (ssymbol ".." &> DRange)
-
-mutual
-  expr : Parser DExpr
-  expr =
-    let x = lambda <|> infixExpr <|> callExpr in
-    let x = x <|> (literal <&> DDLiteral)
-    in x
-
-  literal : Parser DLiteral
-  literal = (bool <&> DBool) <|>
-            (float <&> DNumber) <|>
-            (integer <&> (DNumber . cast)) <|>
-            arrayLit
+  parseExprList : ParseState -> Either String (List DExpr, ParseState)
+  parseExprList state = case state.current of
+    TRBracket => Right ([], state)
+    TRParen => Right ([], state)
+    _ => do
+      (first, state') <- parseExpr state
+      parseExprListHelper [first] state'
     where
-      arrayLit : Parser DLiteral
-      arrayLit =
-        empty <|> filled
-        where 
-          empty = ssymbol "[" *> ssymbol "]" &> DArray []
-          filled = (ssymbol "[" *>
-                   (expr `sepBy1` ssymbol ",") <*
-                   ssymbol "]" <&> DArray)
+      parseExprListHelper : List DExpr -> ParseState -> Either String (List DExpr, ParseState)
+      parseExprListHelper acc state = case state.current of
+        TComma => do
+          state' <- advance state
+          (expr, state'') <- parseExpr state'
+          parseExprListHelper (expr :: acc) state''
+        _ => Right (reverse acc, state)
 
-  lambda : Parser DExpr  
-  lambda = 
-    let x = ssymbol "\\" *> paramList <* ssymbol "->" in
-    x <*> expr <&> \(params, body) => DLambda params body
-  
-  infixExpr : Parser DExpr
-  infixExpr = chainl1 prefixExpr (infixOp <&> \op => \l, r => DInfix l op r)
-  
-  prefixExpr : Parser DExpr
-  prefixExpr = (prefixOp <*> atom <&> \(op, e) => DPrefix op e) <|> callExpr
-  
-  callExpr : Parser DExpr
-  callExpr = 
-    let x = many (ssymbol "(" *> (expr `sepBy` ssymbol ",") <* ssymbol ")") in
-    let x = callHead <*> x <&>
-             \(head, argsList) => case argsList of
-               [] => case head of
-                 DLambdaHead params body => DLambda params body
-                 DIdentHead name => DIdent name
-               (args :: _) => DCall head args
-    in x
-  
-  callHead : Parser DCallHead
-  callHead = lambdaHead <|> identHead
-    where
-      lambdaHead : Parser DCallHead
-      lambdaHead = 
-        let x = ssymbol "\\" *> paramList <* ssymbol "->" in
-        x <*> expr <&> \(params, body) => DLambdaHead params body
-      
-      identHead : Parser DCallHead
-      identHead = ident <&> DIdentHead
-  
-  atom : Parser DExpr
-  atom = literalExpr <|> identExpr <|> parenExpr
-    where
-      literalExpr : Parser DExpr
-      literalExpr = literal <&> DDLiteral
-      
-      identExpr : Parser DExpr
-      identExpr = ident <&> DIdent
-      
-      parenExpr : Parser DExpr
-      parenExpr = ssymbol "(" *> expr <* ssymbol ")" <&> DParen
-
-public export
-program : Parser DExpr
-program = spaces *> expr
-
-public export
-parseDice : String -> Either String DExpr
-parseDice input = case expr $ unpack input of
-  Left err => Left err
-  Right (result, []) => Right result
-  Right (_, remaining) => Left $ "Unexpected remaining input"
+export
+parse : String -> Either String DExpr
+parse input = do
+  state <- initParseState input
+  (expr, finalState) <- parseExpr state
+  case finalState.current of
+    TEOF => Right expr
+    _ => Left $ "Unexpected token after expression: " ++ show finalState.current
