@@ -43,7 +43,6 @@ mutual
     DLambdaHead : List String -> DExpr -> DCallHead
     DIdentHead : String -> DCallHead
 
-
   public export
   data DLiteral : Type where
     DBool : Bool -> DLiteral
@@ -123,7 +122,7 @@ mutual
   partial
   public export
   implementation Show DExpr where
-    show (DLambda args body) = "(\\" ++ joined ", " args ++ " -> " ++ show body ++ ")"
+    show (DLambda args body) = "λ" ++ joined "." args ++ "." ++ show body
     show (DPrefix op e) = show op ++ show e
     show (DInfix l op r) = "(" ++ show l ++ " " ++ show op ++ " " ++ show r ++ ")"
     show (DCall f args) = show f ++ "(" ++ joined ", " (map show args) ++ ")"

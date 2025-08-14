@@ -1,6 +1,7 @@
 module TestCombinator
 
 import Combinator
+import Utils
 
 testParser : Show a => String -> Parser a -> String -> IO ()
 testParser name parser input = do

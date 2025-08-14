@@ -1,189 +1,147 @@
 module Evaluator
 
 import Data.List
-import Data.Either
+import Value
 import Ast
 import Utils
-import Prelude
 import Random
-
-public export
-data Value = VBool Bool | VNum Double | VArray (List Value)
-
-partial
-export
-implementation Show Value where
-  show (VBool b) = show b
-  show (VNum d) = show d
-  show (VArray xs) = "[" ++ joined "," (map show xs) ++ "]"
-
-partial
-export
-implementation Eq Value where
-  (VBool a) == (VBool b) = a == b
-  (VNum a) == (VNum b) = a == b
-  (VArray as) == (VArray bs) = as == bs
-  _ == _ = False
-
-isNonEmptyPureNumArraySum : Value -> Maybe Double
-isNonEmptyPureNumArraySum (VArray []) = Nothing
-isNonEmptyPureNumArraySum (VArray lst) =
-  let
-    go : List Value -> Maybe Double
-    go [] = Just 0.0
-    go (VNum x :: xs) =
-      case go xs of
-        Just s => Just (s + x)
-        Nothing => Nothing
-    go (_ :: _) = Nothing
-  in
-    case go lst of
-      Just x => Just x
-      Nothing => Nothing
-isNonEmptyPureNumArraySum _ = Nothing
-
-isIntegralDouble : Double -> Bool
-isIntegralDouble d = floor d == d
-
-doubleToInt : Double -> Int
-doubleToInt d = cast {to = Int} (floor d)
-
-valueToNumberOrErr : Value -> Either String Double
-valueToNumberOrErr (VNum d) = Right d
-valueToNumberOrErr v@(VArray _) =
-  case isNonEmptyPureNumArraySum v of
-    Just s => Right s
-    Nothing => Left $ "Expected non-empty numeric array or number for arithmetic but got: " ++ show v
-valueToNumberOrErr v = Left $ "Expected number for arithmetic but got: " ++ show v
-
-valueToBoolOrErr : Value -> Either String Bool
-valueToBoolOrErr (VBool b) = Right b
-valueToBoolOrErr v = Left $ "Expected boolean but got: " ++ show v
+import Internal
 
 range : Int -> Int -> List Int
 range lo hi = if lo > hi then [] else lo :: range (lo + 1) hi
 
+subst : Env -> DExpr -> DExpr
+subst env (DIdent name) = case lookup name env of
+  Just val => v2e val
+  Nothing => DIdent name
+  where
+    v2e : Value -> DExpr
+    v2e v = case v of
+      VNum n => DDLiteral $ DNumber n
+      VBool b => DDLiteral $ DBool b
+      VArray a => DDLiteral $ DArray $ map v2e a
+      VLambda args body => DLambda args body
+subst env (DInfix l op r) = DInfix (subst env l) op (subst env r)
+subst env (DPrefix op e) = DPrefix op $ subst env e
+subst env (DCall head args) = DCall head $ map (subst env) args
+subst env (DLambda args body) = DLambda args $ subst env body
+subst env (DParen e) = DParen $ subst env e
+subst env lit@(DDLiteral _) = lit
+
 mutual
-  evalLiteral : DLiteral -> IO (Either String Value)
-  evalLiteral (DBool b) = pure $ Right (VBool b)
-  evalLiteral (DNumber d) = pure $ Right (VNum d)
-  evalLiteral (DArray elems) = f [] elems
-    where
-      f : List Value -> List DExpr -> IO (Either String Value)
-      f vs [] = pure $ Right (VArray vs)
-      f vs (x :: xs) = do
-        r <- evaluate x
-        case r of
-          Left err => pure $ Left err
-          Right v => f (vs ++ [v]) xs
+  evalLiteral : DLiteral -> IO $ OpResult Value
+  evalLiteral (DBool b) = pure $ Right $ VBool b
+  evalLiteral (DNumber d) = pure $ Right $ VNum d
+  evalLiteral (DArray elems) = do
+    results <- traverse evaluate elems
+    pure $ do
+      vals <- sequence results
+      Right (VArray vals)
 
-  evalPrefix : DPrefixOp -> Value -> Either String Value
+  evalPrefix : DPrefixOp -> Value -> OpResult Value
   evalPrefix DNeg v =
-    case valueToNumberOrErr v of
+    case extractNumber v of
       Left e => Left e
-      Right n => Right $ VNum ( - n )
+      Right n => Right $ VNum $ - n
   evalPrefix DNot v =
-    case valueToBoolOrErr v of
+    case extractBool v of
       Left e => Left e
-      Right b => Right $ VBool (not b)
+      Right b => Right $ VBool $ not b
 
-  evalInfix : DInfixOp -> Value -> Value -> IO (Either String Value)
+  evalInfix : DInfixOp -> Value -> Value -> IO $ OpResult Value
   evalInfix DAdd a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VNum $ x + y
 
   evalInfix DSub a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VNum $ x - y
 
   evalInfix DMul a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VNum $ x * y
 
   evalInfix DDiv a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
-    if y == 0.0 then Left "Division by zero."
+    x <- extractNumber a
+    y <- extractNumber b
+    if y == 0.0 then Left "Division by zero"
       else Right $ VNum $ x / y
 
   evalInfix DMod a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
-    if y == 0.0 then Left "Modulo by zero."
+    x <- extractNumber a
+    y <- extractNumber b
+    if y == 0.0 then Left "Modulo by zero"
       else
       if isIntegralDouble x && isIntegralDouble y then
         let xi = doubleToInt x
             yi = doubleToInt y in
-        Right $ VNum $ cast (xi `mod` yi)
+        Right $ VNum $ cast $ xi `mod` yi
       else
-        Left "Modulo requires integer operands."
+        Left "Modulo requires integer operands"
 
   evalInfix DPow a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VNum $ pow x y
 
-  evalInfix DEq a b = pure $ Right $ VBool (a == b)
-  evalInfix DNeq a b = pure $ Right $ VBool (not (a == b))
+  evalInfix DEq a b = pure $ Right $ VBool $ a == b
+  evalInfix DNeq a b = pure $ Right $ VBool $ not $ a == b
 
-  -- 数值比较（不做隐式数组求和；若想支持可改成使用 valueToNumberOrErr）
   evalInfix DGt a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VBool $ x > y
 
   evalInfix DGte a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VBool $ x >= y
 
   evalInfix DLt a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VBool $ x < y
 
   evalInfix DLte a b = pure $ do
-    x <- valueToNumberOrErr a
-    y <- valueToNumberOrErr b
+    x <- extractNumber a
+    y <- extractNumber b
     Right $ VBool $ x <= y
 
   evalInfix DAnd a b = pure $ do
-    x <- valueToBoolOrErr a
-    y <- valueToBoolOrErr b
+    x <- extractBool a
+    y <- extractBool b
     Right $ VBool $ x && y
 
   evalInfix DOr a b = pure $ do
-    x <- valueToBoolOrErr a
-    y <- valueToBoolOrErr b
+    x <- extractBool a
+    y <- extractBool b
     Right $ VBool $ x || y
 
   evalInfix DDice a b = do
-    case (valueToNumberOrErr a, valueToNumberOrErr b) of
+    case (extractNumber a, extractNumber b) of
       (Left ea, _) => pure $ Left ea
       (_, Left eb) => pure $ Left eb
       (Right xa, Right yb) =>
-        if not (isIntegralDouble xa) then pure $ Left "Left operand of DDice must be an integer (natural)."
-        else if xa < 0 then pure $ Left "Left operand of DDice must be non-negative."
-        else if not (isIntegralDouble yb) then pure $ Left "Right operand of DDice must be an integer > 1."
+        if not (isIntegralDouble xa) || xa < 0 then pure $ Left "Left operand of dice must be a natural number"
+        else if not (isIntegralDouble yb) || yb <= 1 then pure $ Left "Right operand of dice must be an integer > 1"
         else
           let
               xi = cast xa
               yi = doubleToInt yb in
-          if yi <= 1 then pure $ Left "Right operand of DDice must be an integer greater than 1."
-          else if xi == 0 then pure $ Right (VArray [])
+          if xi == 0 then pure $ Right (VArray [])
           else do
             nums <- traverse (\_ => randomInt 1 yi) (replicate (cast xi) ())
             pure $ Right $  VArray $ map (VNum . cast) nums
 
   evalInfix DRange a b = do
-    case (valueToNumberOrErr a, valueToNumberOrErr b) of
+    case (extractNumber a, extractNumber b) of
       (Left ea, _) => pure $ Left ea
       (_, Left eb) => pure $ Left eb
       (Right xa, Right yb) =>
-        if not (isIntegralDouble xa) || not (isIntegralDouble yb) then pure $ Left "Both operands of DRange must be integers."
+        if not (isIntegralDouble xa) || not (isIntegralDouble yb) then pure $ Left "Both operands of range must be integers"
         else
           let xi = doubleToInt xa
               yi = doubleToInt yb in
@@ -193,15 +151,15 @@ mutual
             in pure $ Right $ VArray ints
 
   evalInfix DRandom a b = do
-    case (valueToNumberOrErr a, valueToNumberOrErr b) of
+    case (extractNumber a, extractNumber b) of
       (Left ea, _) => pure $ Left ea
       (_, Left eb) => pure $ Left eb
       (Right xa, Right yb) =>
-        if not (isIntegralDouble xa) || not (isIntegralDouble yb) then pure $ Left "Both operands of DRandom must be integers."
+        if not (isIntegralDouble xa) || not (isIntegralDouble yb) then pure $ Left "Both operands of random must be integer"
         else
           let xi = doubleToInt xa
               yi = doubleToInt yb in
-          if xi >= yi then pure $ Left "For DRandom, left operand must be strictly less than right operand."
+          if xi >= yi then pure $ Left "Left operand of random must be strictly less than right operand"
           else do
             val <- randomInt xi $ yi - 1
             pure $ Right $ VNum $ cast val
@@ -209,17 +167,33 @@ mutual
   evalInfix DConcat a b =
     case (a, b) of
       (VArray as, VArray bs) => pure $ Right $ VArray $ as ++ bs
-      _ => pure $ Left $ "DConcat requires both operands to be arrays. Got: " ++ show a ++ " and " ++ show b
+      _ => pure $ Left $ "Concat requires both operands to be arrays but got: " ++ show a ++ " and " ++ show b
 
   evalInfix DColon a b = do
     case b of
       VArray bs => pure $ Right $ VArray $ a :: bs
-      _ => pure $ Left $ "DColon requires right operand to be an array. Got: " ++ show b
+      _ => pure $ Left $ "Colon requires right operand to be an arra but got: " ++ show b
 
   -- evalInfix _ _ _ = pure $ Left "Unsupported infix operation or wrong operand types."
 
+  evalCall : DCallHead -> List Value -> IO $ OpResult Value
+  evalCall (DIdentHead name) args = case lookup name builtinFunctions of
+    Just f => f args
+    Nothing => case lookup name builtinWithLambdaFunctions of
+      Just f => f evalBuiltinWithLambda args
+      Nothing => pure $ Left $ "Undefined function: " ++ name
+  evalCall (DLambdaHead formal_args body) args = if length formal_args == length args
+    then
+      evaluate $ subst (zip formal_args args) body
+    else
+      pure $ Left $ "Wrong number of arguments for lambda: expected " ++ show (length formal_args) ++ " but got " ++ show (length args)
+
+  evalBuiltinWithLambda : Value -> List Value -> IO $ OpResult Value
+  evalBuiltinWithLambda (VLambda args body) args' = evalCall (DLambdaHead args body) args'
+  evalBuiltinWithLambda v _ = pure $ Left $ "Expected a lambda but got: " ++ show v
+
   export
-  evaluate : DExpr -> IO (Either String Value)
+  evaluate : DExpr -> IO $ OpResult Value
   evaluate (DDLiteral lit) = evalLiteral lit
   evaluate (DParen e) = evaluate e
   evaluate (DPrefix op e) = do
@@ -232,6 +206,11 @@ mutual
       (Left err, _) => pure $ Left err
       (_, Left err) => pure $ Left err
       (Right lv, Right rv) => evalInfix op lv rv
-  evaluate (DLambda _ _ ) = pure $ Left "Lambda values not supported at runtime in this DSL evaluator."
-  evaluate (DCall _ _) = pure $ Left "Function calls not supported in this DSL evaluator."
-  evaluate (DIdent name) = pure $ Left $ "Unbound identifier: " ++ name
+  evaluate (DLambda args body) = pure $ Right $ VLambda args body
+  evaluate (DCall head args) = do
+    args <- traverse evaluate args
+    let sequenced = sequence args
+    case sequenced of
+      Left err => pure $ Left err
+      Right vals => evalCall head vals
+  evaluate (DIdent _) = pure $ Left "Invalid identifier"

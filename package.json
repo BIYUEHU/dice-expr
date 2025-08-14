@@ -3,8 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "python scripts/watch.py --root src --ext .idr --cmd \"npm run build && node build/exec/Main.js\"",
+    "start": "node build/exec/Main.js",
+    "dev": "python scripts/watch.py --root src --ext .idr --cmd \"npm run dev:only\"",
+    "dev:only": "npm run build && npm run start",
     "build": "idris2 --cg node --build"
-  },
-  "devDependencies": {}
+  }
 }

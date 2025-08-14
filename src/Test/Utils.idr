@@ -30,3 +30,4 @@ testGroup name tests = f tests 1 0
     f (Just err :: xs) i e = do
       putStrLn $ "\x1b[31m" ++ p ++ " >> Test " ++ show i ++ " failed: " ++ err ++ "\x1b[0m"
       f xs (i+1) (e+1)
+

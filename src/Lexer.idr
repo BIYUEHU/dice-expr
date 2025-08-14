@@ -42,7 +42,7 @@ readIdent chars =
   in (pack identChars, rest)
 
 export
-nextToken : LexState -> Either String (Token, LexState)
+nextToken : LexState -> OpResult (Token, LexState)
 nextToken state =
   let state' = skipWhitespace state
   in case state'.input of

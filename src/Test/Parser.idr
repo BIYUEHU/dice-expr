@@ -2,6 +2,7 @@ module Test.Parser
 
 import Ast
 import Parser
+import Utils
 import Test.Utils
 
 allPrefixOps : List DPrefixOp

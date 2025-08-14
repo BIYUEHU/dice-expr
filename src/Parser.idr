@@ -4,6 +4,7 @@ import Lexer
 import Data.List
 import Token
 import Ast
+import Utils
 
 export
 record ParseState where
@@ -12,24 +13,24 @@ record ParseState where
   current : Token
 
 export
-initParseState : String -> Either String ParseState
+initParseState : String -> OpResult ParseState
 initParseState input = do
   let lexState = initLexState input
   (firstToken, newLexState) <- nextToken lexState
   Right (MkParseState newLexState firstToken)
 
-advance : ParseState -> Either String ParseState
+advance : ParseState -> OpResult ParseState
 advance state = do
   (token, newLexState) <- nextToken state.lexState
   Right (MkParseState newLexState token)
 
-expect : Token -> ParseState -> Either String ParseState
+expect : Token -> ParseState -> OpResult ParseState
 expect expected state =
   if state.current == expected
   then advance state
   else Left ("Expected " ++ show expected ++ " but got " ++ show state.current)
 
-tokenToInfixOp : Token -> Either String DInfixOp
+tokenToInfixOp : Token -> OpResult DInfixOp
 tokenToInfixOp TPlus = Right DAdd
 tokenToInfixOp TMinus = Right DSub
 tokenToInfixOp TMul = Right DMul
@@ -53,15 +54,15 @@ tokenToInfixOp t = Left $ "Not an infix operator: " ++ show t
 
 
 mutual
-  parseExpr : ParseState -> Either String (DExpr, ParseState)
+  parseExpr : ParseState -> OpResult (DExpr, ParseState)
   parseExpr = parseInfixExpr 0
 
-  parseInfixExpr : Nat -> ParseState -> Either String (DExpr, ParseState)
+  parseInfixExpr : Nat -> ParseState -> OpResult (DExpr, ParseState)
   parseInfixExpr minPrec state = do
     (left, state') <- parsePrimaryExpr state
     parseInfixExprHelper minPrec left state'
 
-  parseInfixExprHelper : Nat -> DExpr -> ParseState -> Either String (DExpr, ParseState)
+  parseInfixExprHelper : Nat -> DExpr -> ParseState -> OpResult (DExpr, ParseState)
   parseInfixExprHelper minPrec left state =
     if isInfixOp state.current then
       let prec = precedence state.current
@@ -76,8 +77,14 @@ mutual
     else
       Right (left, state)
 
-  parsePrimaryExpr : ParseState -> Either String (DExpr, ParseState)
-  parsePrimaryExpr state = case state.current of
+  parsePrimaryExpr : ParseState -> OpResult (DExpr, ParseState)
+  parsePrimaryExpr state = do
+    (baseExpr, state') <- parseAtomicExpr state
+    parseCallChain baseExpr state'
+  
+  -- 新增：解析原子表达式（不包括函数调用）
+  parseAtomicExpr : ParseState -> OpResult (DExpr, ParseState)
+  parseAtomicExpr state = case state.current of
     TLambda => do
       state' <- advance state
       case state'.current of
@@ -85,8 +92,8 @@ mutual
           (params, state'') <- parseParamList state'
           state''' <- expect TArrow state''
           (body, state'''') <- parseExpr state'''
-          Right ( DLambda params body, state'''')
-        _ => Left $ "Expected parameter after \\, got: " ++ show state'.current
+          Right (DLambda params body, state'''')
+        _ => Left $ "Expected parameter after \\ but got: " ++ show state'.current
 
     TMinus => do
       state' <- advance state
@@ -96,23 +103,23 @@ mutual
     TNot => do
       state' <- advance state
       (expr, state'') <- parsePrimaryExpr state'
-      Right ( DPrefix DNot expr, state'')
+      Right (DPrefix DNot expr, state'')
 
     TLParen => do
       state' <- advance state
       (expr, state'') <- parseExpr state'
       state''' <- expect TRParen state''
-      Right ( DParen expr,  state''')
+      Right (DParen expr, state''')
 
     TLBracket => do
       state' <- advance state
       (exprs, state'') <- parseExprList state'
       state''' <- expect TRBracket state''
-      Right ( DDLiteral $ DArray exprs, state''')
+      Right (DDLiteral $ DArray exprs, state''')
 
     TNumber n => do
       state' <- advance state
-      Right ( DDLiteral $ DNumber n, state')
+      Right (DDLiteral $ DNumber n, state')
 
     TBool b => do
       state' <- advance state
@@ -120,20 +127,28 @@ mutual
 
     TIdent name => do
       state' <- advance state
-      case state'.current of
-        TLParen => parseCall name state'
-        _ => Right (DIdent name, state')
+      Right (DIdent name, state')
 
     _ => Left $ "Unexpected token in primary expression: " ++ show state.current
 
-  parseCall : String -> ParseState -> Either String (DExpr, ParseState)
-  parseCall name state = do
-    state' <- expect TLParen state
-    (args, state'') <- parseExprList state'
-    state''' <- expect TRParen state''
-    Right (DCall (DIdentHead name) args, state''')
+  parseCallChain : DExpr -> ParseState -> OpResult (DExpr, ParseState)
+  parseCallChain expr state = case state.current of
+    TLParen => do
+      state' <- advance state
+      (args, state'') <- parseExprList state'
+      state''' <- expect TRParen state''
+      callExpr <- case expr of
+        DIdent name => Right $ DCall (DIdentHead name) args
+        DLambda params body => Right $ DCall (DLambdaHead params body) args
+        DParen innerExpr => case innerExpr of
+          DLambda params body => Right $ DCall (DLambdaHead params body) args
+          DIdent name => Right $ DCall (DIdentHead name) args
+          _ => Left "Cannot call this expression type"
+        _ => Left "Cannot call this expression type"
+      parseCallChain callExpr state'''
+    _ => Right (expr, state)
 
-  parseParamList : ParseState -> Either String (List String, ParseState)
+  parseParamList : ParseState -> OpResult (List String, ParseState)
   parseParamList state = case state.current of
     TIdent name => do
       state' <- advance state
@@ -143,9 +158,9 @@ mutual
           (rest, state''') <- parseParamList state''
           Right ( name :: rest, state''')
         _ => Right ( [name], state')
-    _ => Left $ "Expected parameter name, got: " ++ show state.current
+    _ => Left $ "Expected parameter name but got: " ++ show state.current
 
-  parseExprList : ParseState -> Either String (List DExpr, ParseState)
+  parseExprList : ParseState -> OpResult (List DExpr, ParseState)
   parseExprList state = case state.current of
     TRBracket => Right ([], state)
     TRParen => Right ([], state)
@@ -153,7 +168,7 @@ mutual
       (first, state') <- parseExpr state
       parseExprListHelper [first] state'
     where
-      parseExprListHelper : List DExpr -> ParseState -> Either String (List DExpr, ParseState)
+      parseExprListHelper : List DExpr -> ParseState -> OpResult (List DExpr, ParseState)
       parseExprListHelper acc state = case state.current of
         TComma => do
           state' <- advance state
@@ -162,7 +177,7 @@ mutual
         _ => Right (reverse acc, state)
 
 export
-parse : String -> Either String DExpr
+parse : String -> OpResult DExpr
 parse input = do
   state <- initParseState input
   (expr, finalState) <- parseExpr state

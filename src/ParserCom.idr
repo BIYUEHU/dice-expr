@@ -96,7 +96,7 @@ mutual
               [] => case head of
                 DLambdaHead params body => DLambda params body
                 DIdentHead name => DIdent name
-                (args :: _) => DCall head (pack args)
+              (args :: _) => DCall head args
     in x
 
   callHead : Parser DCallHead
@@ -108,7 +108,9 @@ mutual
         x <*> expr <&> \(params, body) => DLambdaHead (map pack params) body
 
       identHead : Parser DCallHead
-      identHead = (map pack ident) <&> DIdentHead
+      identHead = ?mapident Combinator.(<&>) DIdentHead
+        where
+          x22 = ident
 
   atom : Parser DExpr
   atom = literalExpr <|> identExpr <|> parenExpr
@@ -127,7 +129,7 @@ program : Parser DExpr
 program = spaces *> expr
 
 public export
-parseDice : String -> Either String DExpr
+parseDice : String -> OpResult DExpr
 parseDice input = case expr $ unpack input of
   Left err => Left err
   Right (result, []) => Right result

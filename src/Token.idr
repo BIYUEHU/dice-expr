@@ -2,36 +2,36 @@ module Token
 
 public export
 data Token
-  = TLambda          -- "\"
-  | TArrow           -- "->"
-  | TComma           -- ","
-  | TLParen          -- "("
-  | TRParen          -- ")"
-  | TLBracket        -- "["
-  | TRBracket        -- "]"
-  | TIdent String    -- Identifier
-  | TNumber Double   -- Number
-  | TBool Bool       -- Boolean
-  | TPlus            -- "+"
-  | TMinus           -- "-"
-  | TMul             -- "*"
-  | TDiv             -- "/"
-  | TMod             -- "%"
-  | TPow             -- "^"
-  | TEq              -- "=="
-  | TNeq             -- "!="
-  | TGt              -- ">"
-  | TGte             -- ">="
-  | TLt              -- "<"
-  | TLte             -- "<="
-  | TAnd             -- "&&"
-  | TOr              -- "||"
-  | TDice            -- "d"
-  | TRandom          -- "~"
-  | TRange           -- ".."
-  | TConcat          -- "++"
-  | TColon           -- ":"
-  | TNot             -- "!"
+  = TLambda
+  | TArrow
+  | TComma
+  | TLParen
+  | TRParen
+  | TLBracket
+  | TRBracket
+  | TIdent String
+  | TNumber Double
+  | TBool Bool
+  | TPlus
+  | TMinus
+  | TMul
+  | TDiv
+  | TMod
+  | TPow
+  | TEq
+  | TNeq
+  | TGt
+  | TGte
+  | TLt
+  | TLte
+  | TAnd
+  | TOr
+  | TDice
+  | TRandom
+  | TRange
+  | TConcat
+  | TColon
+  | TNot
   | TEOF
 
 public export

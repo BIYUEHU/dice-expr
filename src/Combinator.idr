@@ -4,7 +4,7 @@ import Utils
 
 public export
 Parser : Type -> Type
-Parser a = HString -> Either String (a, HString)
+Parser a = HString -> OpResult (a, HString)
 
 export
 empty : Parser (List a)

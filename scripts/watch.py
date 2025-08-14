@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+import signal
 from pathlib import Path
 
 INTERVAL = 0.5
@@ -23,6 +24,36 @@ def gather_files(root: Path, exts, ignore_dirs):
                 except Exception:
                     pass
     return all_files
+
+
+def kill_proc_tree(proc):
+    try:
+        if proc.poll() is not None:
+            return
+        if sys.platform.startswith("win"):
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+        try:
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def main():
@@ -52,14 +83,16 @@ def main():
     def run_cmd():
         nonlocal proc
         if proc and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            kill_proc_tree(proc)
         cmd_str = " ".join(args.cmd)
         print(f"🔄 Restarting: {cmd_str}")
-        proc = subprocess.Popen(cmd_str, shell=True)
+        if sys.platform.startswith("win"):
+            proc = subprocess.Popen(
+                cmd_str, shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        else:
+            proc = subprocess.Popen(cmd_str, shell=True, preexec_fn=os.setsid)
+        time.sleep(0.05)
 
     run_cmd()
 
@@ -86,8 +119,7 @@ def main():
     except KeyboardInterrupt:
         print("\n🛑 Stopping watcher...")
         if proc:
-            proc.terminate()
-            proc.wait()
+            kill_proc_tree(proc)
 
 
 if __name__ == "__main__":
