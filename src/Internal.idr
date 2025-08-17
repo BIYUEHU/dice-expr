@@ -4,6 +4,7 @@ import Data.List
 import Ast
 import Utils
 import Value
+import Random
 
 typeCheckAll : (Value -> OpResult a) -> List Value -> OpResult (List a)
 typeCheckAll f xs = traverse f xs
@@ -38,7 +39,7 @@ Ipow args = case typeCheckAll extractNumber args of
   Right (x::xs) => pure $ Right $ VNum $ foldl pow x xs
   Right [] => pure $ Left "Expects at least one number"
 
-Isin, Icos, Itan, Icot, Isec, Icsc, Iasin, Iacos, Iatan,
+Isin, Icos, Itan, Icot, Isec, Icsc, Iasin, Iacos, Iatan, Iacosh, Iasinh, Iatanh,
 Isinh, Icosh, Itanh, Icoth, Isech, Icsch, Ilog, Iexp : BuiltinFunction
 
 singleNum : (Double -> Double) -> List Value -> IO $ OpResult Value
@@ -58,11 +59,47 @@ Iatan = singleNum atan
 Isinh = singleNum sinh
 Icosh = singleNum cosh
 Itanh = singleNum tanh
+Iacosh = singleNum (\x => log (x + sqrt (x * x - 1.0)))
+Iasinh = singleNum (\x => log (x + sqrt (x * x + 1.0)))
+Iatanh = singleNum (\x => 0.5 * log ((1.0 + x) / (1.0 - x)))
 Icoth = singleNum (\x => 1 / tanh x)
 Isech = singleNum (\x => 1 / cosh x)
 Icsch = singleNum (\x => 1 / sinh x)
 Ilog = singleNum log
 Iexp = singleNum exp
+Iabs = singleNum abs
+Icbrt = singleNum (\x => pow x (1.0/3.0))
+Iceil = singleNum ceiling
+Isqrt = singleNum sqrt
+Ifloor = singleNum floor
+Itrunc = singleNum (\x => cast {to=Double} (cast {to=Integer} x))
+Iround = singleNum (\x => cast {to=Double} (cast {to=Integer} (x + 0.5)))
+Ifround = singleNum (\x => cast {to=Double} (cast {to=Double} x))
+
+Imax : BuiltinFunction
+Imax args = case typeCheckAll extractNumber args of
+  Left err => pure $ Left err
+  Right [] => pure $ Left "Expects at least one number"
+  Right (x::xs) => pure $ Right $ VNum (foldl max x xs)
+
+Imin : BuiltinFunction
+Imin args = case typeCheckAll extractNumber args of
+  Left err => pure $ Left err
+  Right [] => pure $ Left "Expects at least one number"
+  Right (x::xs) => pure $ Right $ VNum (foldl min x xs)
+
+Ihypot : BuiltinFunction
+Ihypot args = case typeCheckAll extractNumber args of
+  Left err => pure $ Left err
+  Right xs => pure $ Right $ VNum (sqrt (sum (map (\x => x * x) xs)))
+
+Iimul : BuiltinFunction
+Iimul [VNum x, VNum y] =
+  let ix = cast {to=Integer} x
+      iy = cast {to=Integer} y
+  in pure $ Right $ VNum (cast (ix * iy))
+Iimul [x, y] = pure $ Left $ "Expects two numbers but got " ++ show x ++ " and " ++ show y
+Iimul xs = pure $ Left $ "Expects two numbers but got " ++ show (length xs) ++ " arguments"
 
 Iand, Ior : BuiltinFunction
 Iand args = case typeCheckAll extractBool args of
@@ -92,13 +129,13 @@ Ineq args = case typeCheckAll extractNumber args of
 Ilt args = case typeCheckAll extractNumber args of
   Left err => pure $ Left err
   Right [] => pure $ Left "Expects at least one number"
-  Right [_] => pure $ Right $ VBool True  -- 单元素直接 True
+  Right [_] => pure $ Right $ VBool True
   Right xs => pure $ Right $ VBool (all (\(a,b) => a < b) (adjacentPairs xs))
 
 Igt args = case typeCheckAll extractNumber args of
   Left err => pure $ Left err
   Right [] => pure $ Left "Expects at least one number"
-  Right [_] => pure $ Right $ VBool True  -- 单元素直接 True
+  Right [_] => pure $ Right $ VBool True
   Right xs => pure $ Right $ VBool (all (\(a,b) => a > b) (adjacentPairs xs))
 
 Iif : BuiltinFunction
@@ -130,6 +167,111 @@ Isum [VArray xs] = case typeCheckAll extractNumber xs of
     Right nums => pure $ Right $ VNum (sum nums)
 Isum _ = pure $ Left "Expects an array"
 
+Iunion : BuiltinFunction
+Iunion [VArray xs, VArray ys] =
+  pure $ Right $ VArray (xs ++ filter (\y => not (elem y xs)) ys)
+Iunion [x, y] = pure $ Left $ "Expects two arrays but got " ++ show x ++ " and " ++ show y
+Iunion xs = pure $ Left $ "Expects two arrays but got " ++ show (length xs) ++ " arguments"
+
+Idifference : BuiltinFunction
+Idifference [VArray xs, VArray ys] =
+  pure $ Right $ VArray (filter (\x => not (elem x ys)) xs)
+Idifference [x, y] = pure $ Left $ "Expects two arrays but got " ++ show x ++ " and " ++ show y
+Idifference xs = pure $ Left $ "Expects two arrays but got " ++ show (length xs) ++ " arguments"
+
+Iintersection : BuiltinFunction
+Iintersection [VArray xs, VArray ys] =
+  pure $ Right $ VArray (filter (\x => elem x ys) xs)
+Iintersection [x, y] = pure $ Left $ "Expects two arrays but got " ++ show x ++ " and " ++ show y
+Iintersection xs = pure $ Left $ "Expects two arrays but got " ++ show (length xs) ++ " arguments"
+
+Icontain : BuiltinFunction
+Icontain [VArray xs, VArray ys] =
+  pure $ Right $ VBool (all (\y => elem y xs) ys)
+Icontain [x, y] = pure $ Left $ "Expects two arrays but got " ++ show x ++ " and " ++ show y
+Icontain xs = pure $ Left $ "Expects two arrays but got " ++ show (length xs) ++ " arguments"
+
+Iinclude : BuiltinFunction
+Iinclude [VArray xs, el] = pure $ Right $ VBool (elem el xs)
+Iinclude [x, _] = pure $ Left $ "Expects an array and an element but got " ++ show x
+Iinclude xs = pure $ Left $ "Expects an array and an element but got " ++ show (length xs) ++ " arguments"
+
+Ishuffle : BuiltinFunction
+Ishuffle [VArray xs] = do
+  shuffled <- shuffleList xs
+  pure $ Right $ VArray shuffled
+  where
+    shuffleList : List Value -> IO (List Value)
+    shuffleList [] = pure []
+    shuffleList [x] = pure [x]
+    shuffleList xs = do
+      rand <- prim__random
+      let len = cast (length xs)
+          idx = cast {to=Integer} (rand * len)
+          (before, after) = splitAt (cast idx) xs
+      case after of
+        [] => shuffleList xs
+        (y::ys) => do
+          rest <- shuffleList (before ++ ys)
+          pure (y :: rest)
+Ishuffle [x] = pure $ Left $ "Expects an array but got " ++ show x
+Ishuffle xs = pure $ Left $ "Expects an array but got " ++ show (length xs) ++ " arguments"
+
+Ipick : BuiltinFunction
+Ipick [VArray xs, VNum count] = do
+  let n = cast count
+  if n <= 0 then pure $ Right $ VArray []
+    else if n >= length xs then pure $ Right $ VArray xs
+    else do
+      picked <- pickRandom (cast n) xs []
+      pure $ Right $ VArray picked
+  where
+    pickRandom : Integer -> List Value -> List Value -> IO (List Value)
+    pickRandom 0 _ acc = pure acc
+    pickRandom _ [] acc = pure acc
+    pickRandom n xs acc = do
+      rand <- prim__random
+      let len = cast (length xs)
+          idx = cast {to=Integer} (rand * len)
+          (before, after) = splitAt (cast idx) xs
+      case after of
+        [] => pickRandom n xs acc -- 重试
+        (y::ys) => pickRandom (n-1) (before ++ ys) (y::acc)
+Ipick [x, y] = pure $ Left $ "Expects an array and a number but got " ++ show x ++ " and " ++ show y
+Ipick xs = pure $ Left $ "Expects an array and a number but got " ++ show (length xs) ++ " arguments"
+
+Iint : BuiltinFunction
+Iint [VNum start, VNum end] = do
+  let s = cast {to=Integer} start
+      e = cast {to=Integer} end
+  if s >= e then pure $ Left "Start must be less than end"
+    else do
+      rand <- prim__random
+      let result = s + cast {to=Integer} (rand * cast (e - s))
+      pure $ Right $ VNum (cast result)
+Iint [x, y] = pure $ Left $ "Expects two numbers but got " ++ show x ++ " and " ++ show y
+Iint xs = pure $ Left $ "Expects two numbers but got " ++ show (length xs) ++ " arguments"
+
+Ireal : BuiltinFunction
+Ireal [VNum start, VNum end] = do
+  if start >= end then pure $ Left "Start must be less than end"
+    else do
+      rand <- prim__random
+      let result = start + rand * (end - start)
+      pure $ Right $ VNum result
+Ireal [x, y] = pure $ Left $ "Expects one or two numbers but got " ++ show x ++ " and " ++ show y
+Ireal xs = pure $ Left $ "Expects two numbers but got " ++ show (length xs) ++ " arguments"
+
+Ibool : BuiltinFunction
+Ibool [VNum prob] = do
+  if prob < 0.0 || prob > 1.0
+    then pure $ Left "Probability must be between 0 and 1"
+    else do
+      rand <- prim__random
+      pure $ Right $ VBool (rand < prob)
+Ibool [x] = pure $ Left $ "Expects a number between 0 and 1 but got " ++ show x
+Ibool xs = pure $ Left $ "Expects a probability number but got " ++ show (length xs) ++ " arguments"
+
 public export
 builtinFunctions: HashMap String BuiltinFunction
 builtinFunctions = [
@@ -153,6 +295,21 @@ builtinFunctions = [
     , ("coth", Icoth)
     , ("sech", Isech)
     , ("csch", Icsch)
+    , ("acosh", Iacosh)
+    , ("asinh", Iasinh)
+    , ("atanh", Iatanh)
+    , ("cbrt", Icbrt)
+    , ("sqrt", Isqrt)
+    , ("ceil", Iceil)
+    , ("floor", Ifloor)
+    , ("round", Iround)
+    , ("abs", Iabs)
+    , ("trunc", Itrunc)
+    , ("fround", Ifround)
+    , ("hypot", Ihypot)
+    , ("imul", Imul)
+    , ("max", Imax)
+    , ("min", Imin)
     , ("log", Ilog)
     , ("exp", Iexp)
     , ("and", Iand)
@@ -168,6 +325,16 @@ builtinFunctions = [
     , ("fill", Ifill)
     , ("slice", Islice)
     , ("sum", Isum)
+    , ("union", Iunion)
+    , ("intersection", Iintersection)
+    , ("difference", Idifference)
+    , ("contain", Icontain)
+    , ("include", Iinclude)
+    , ("shuffle", Ishuffle)
+    , ("pick", Ipick)
+    , ("int", Iint)
+    , ("real", Ireal)
+    , ("bool", Ibool)
 ]
 
 extractArrayWithLambda : List Value -> OpResult (List Value, Value)
